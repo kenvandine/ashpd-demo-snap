@@ -1,0 +1,104 @@
+name: ashpd-demo
+adopt-info: ashpd-demo
+grade: stable # must be 'stable' to release into candidate/stable channels
+confinement: strict
+base: core22
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+
+layout:
+  /usr/share/ashpd-demo/resources.gresource:
+    symlink: $SNAP/usr/share/ashpd-demo/resources.gresource
+
+slots:
+  # for GtkApplication registration
+  ashpd-demo:
+    interface: dbus
+    bus: session
+    name: com.belmoussaoui.ashpd.demo
+
+apps:
+  ashpd-demo:
+    extensions: [gnome]
+    command: usr/bin/ashpd-demo
+    common-id: com.belmoussaoui.ashpd.demo
+    desktop: usr/share/applications/com.belmoussaoui.ashpd.demo.desktop
+
+parts:
+  rustup:
+    plugin: nil
+    build-packages: [wget]
+    build-environment:
+      - RUSTUP_HOME: $CRAFT_PART_INSTALL/usr/share/rust
+      - CARGO_HOME: $CRAFT_PART_INSTALL/usr/share/rust
+      - CARGO_BUILD_JOBS: $CRAFT_PARALLEL_BUILD_COUNT
+    override-pull: |
+      wget https://sh.rustup.rs -O $CRAFT_PART_SRC/rustup-init.sh
+      chmod +x $CRAFT_PART_SRC/rustup-init.sh
+    override-build: |
+      $CRAFT_PART_SRC/rustup-init.sh -y --no-modify-path
+      mkdir -p $CRAFT_PART_INSTALL/usr/bin
+      for i in `ls $RUSTUP_HOME/bin/`; do
+        ln -s ../share/rust/bin/$i $CRAFT_PART_INSTALL/usr/bin/$i
+      done
+    override-prime: |
+      echo 'Skip Prime'
+
+  libshumate:
+    source: https://gitlab.gnome.org/GNOME/libshumate.git
+    source-type: git
+    plugin: meson
+    meson-parameters: [--prefix=/usr, -Dgtk_doc=false, -Dsysprof=disabled]
+
+  pipewire:
+    source: https://gitlab.freedesktop.org/pipewire/pipewire/-/archive/0.3.79/pipewire-0.3.79.tar.gz
+    plugin: meson
+    meson-parameters:
+      - --prefix=/usr
+      - --buildtype=release
+      - --strip
+      - -Dalsa=disabled
+      - -Dpipewire-alsa=disabled
+      - -Djack=disabled
+      - -Dpipewire-jack=disabled
+      - -Dsession-managers=[]
+    prime:
+      - usr/lib/*/pipewire-*
+      - usr/lib/*/spa-*
+      - usr/lib/*/libpipewire*.so*
+      - usr/share/pipewire
+
+  ashpd-demo:
+    after: [rustup, libshumate, pipewire]
+    source: https://github.com/bilelmoussaoui/ashpd
+    source-type: git
+    source-subdir: ashpd-demo
+    plugin: meson
+    meson-parameters: [--prefix=/usr, -Dprofile=default]
+    parse-info: [usr/share/metainfo/com.belmoussaoui.ashpd.demo.metainfo.xml]
+    build-packages:
+      - libgstreamer1.0-dev
+      - libgstreamer-plugins-base1.0-dev
+      - libpipewire-0.3-dev
+    build-environment:
+      - RUSTUP_HOME: $CRAFT_STAGE/usr/share/rust
+      - CARGO_HOME: $CRAFT_STAGE/usr/share/rust
+      - CARGO_BUILD_JOBS: $CRAFT_PARALLEL_BUILD_COUNT
+
+  # Find files provided by the base and platform snap and ensure they aren't
+  # duplicated in this snap
+  cleanup:
+    after:  # Make this part run last; list all your other parts here
+      - ashpd-demo
+      - rustup
+    plugin: nil
+    build-snaps:  # List all content-snaps and base snaps you're using here
+      - gnome-42-2204
+      - gtk-common-themes
+      - core22
+    override-prime: |
+      set -eux
+      for snap in "gnome-42-2204" "gtk-common-themes" "core22"; do
+      cd "/snap/$snap/current" && find . -type f,l -exec rm -f "$SNAPCRAFT_PRIME/{}" \;
+      done  
